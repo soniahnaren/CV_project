@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SignTalk – sign language to text and speech</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A4%9F%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --ink: #ffffff;
+    --muted: #d3dbf8;
+    --dim: #b4bfea;
+    --blue: #3b82f6;
+    --violet: #8b5cf6;
+    --rose: #f43f5e;
+    --mint: #34d399;
+    --edge: rgba(255,255,255,.28);
+    --font: "Segoe UI", "SF Pro Display", "Helvetica Neue", Inter, system-ui, -apple-system, Roboto, "DejaVu Sans", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    color: var(--ink);
+    font-family: var(--font);
+    background: #000;
+    overflow-x: hidden;
+  }
+  /* glowing orbs behind the glass - the panels frost them */
+  .orb { position: fixed; border-radius: 50%; z-index: 0; pointer-events: none; }
+  .o1 { width: 22vmax; height: 22vmax; left: -5vmax; top: 4vmax; background: linear-gradient(135deg, #ffbe5a, #ff5a8c); }
+  .o2 { width: 26vmax; height: 26vmax; left: 38vw; top: -8vmax; background: linear-gradient(135deg, #ff78c8, #785aff); }
+  .o3 { width: 20vmax; height: 20vmax; right: -6vmax; top: 48vh; background: linear-gradient(135deg, #78ffc8, #3ca0ff); }
+  .o4 { width: 24vmax; height: 24vmax; left: 30vw; bottom: -10vmax; background: linear-gradient(135deg, #50dcff, #5078ff); }
+  .o5 { width: 14vmax; height: 14vmax; left: 6vw; bottom: 6vh; background: linear-gradient(135deg, #c88cff, #5a78ff); }
+  .glow { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background: radial-gradient(60vmax 40vmax at 90% 0%, rgba(34,190,230,.35), transparent 60%),
+                radial-gradient(60vmax 40vmax at 0% 100%, rgba(210,50,200,.32), transparent 60%); }
+
+  .app { position: relative; z-index: 1; max-width: 1320px; margin: 0 auto; padding: 18px; display: grid; gap: 16px; }
+  .glass {
+    background: linear-gradient(180deg, rgba(255,255,255,.20), rgba(255,255,255,.07)), #0a0a0a;
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    backdrop-filter: blur(24px) saturate(150%);
+    border: 1px solid var(--edge);
+    border-radius: 24px;
+    box-shadow: 0 14px 44px rgba(5,8,40,.45), inset 0 1px 0 rgba(255,255,255,.38);
+  }
+
+  header.top { display: flex; align-items: center; gap: 14px; padding: 12px 18px; flex-wrap: wrap; }
+  .logo { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-weight: 700;
+    background: linear-gradient(90deg, var(--blue), var(--violet)); box-shadow: inset 0 1px 0 rgba(255,255,255,.5); }
+  h1 { margin: 0; font-size: 1.55rem; letter-spacing: .2px; }
+  .tag { color: var(--muted); font-size: .95rem; }
+  .chips { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: .82rem;
+    background: rgba(255,255,255,.12); border: 1px solid var(--edge); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #9aa6cf; }
+  .dot.live { background: var(--mint); box-shadow: 0 0 10px var(--mint); }
+
+  .grid { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 16px; align-items: start; }
+  .col { display: grid; gap: 16px; min-width: 0; }
+  .card { padding: 18px; }
+  h2 { margin: 0 0 10px; font-size: 1.05rem; }
+  .hint { color: var(--dim); font-size: .82rem; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+  /* camera */
+  .stage { position: relative; border-radius: 18px; overflow: hidden; background: #0a1230; aspect-ratio: 4 / 3;
+    border: 1px solid var(--edge); }
+  .stage canvas { width: 100%; height: 100%; display: block; object-fit: cover; }
+  .idle, .overlay { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+  .idle { color: var(--muted); font-size: 1.1rem; line-height: 1.6; background: rgba(8,12,40,.55); padding: 20px; }
+  .overlay { pointer-events: none; font-size: clamp(3rem, 12vw, 6rem); font-weight: 800; text-shadow: 0 4px 30px rgba(0,0,0,.6); }
+  .overlay.small { font-size: 1.1rem; font-weight: 700; place-items: start center; padding-top: 12px; }
+  .overlay .pill { background: rgba(10,16,48,.7); padding: 6px 14px; border-radius: 999px; border: 1px solid var(--edge); }
+
+  /* buttons */
+  .btn { font: inherit; font-weight: 600; font-size: .92rem; color: var(--ink); cursor: pointer; border-radius: 999px;
+    padding: 10px 18px; border: 1px solid rgba(255,255,255,.38);
+    background: linear-gradient(180deg, rgba(255,255,255,.26), rgba(255,255,255,.10));
+    transition: transform .12s ease, background .12s ease, opacity .12s ease; }
+  .btn:hover:not(:disabled) { background: linear-gradient(180deg, rgba(255,255,255,.38), rgba(255,255,255,.18)); }
+  .btn:active:not(:disabled) { transform: scale(.97); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.primary { background: linear-gradient(90deg, var(--blue), var(--violet)); border-color: rgba(255,255,255,.5); }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.12); background: linear-gradient(90deg, var(--blue), var(--violet)); }
+  .btn.danger { background: linear-gradient(90deg, var(--rose), #fb7185); border-color: rgba(255,255,255,.5); }
+  .btn.danger:hover:not(:disabled) { filter: brightness(1.1); background: linear-gradient(90deg, var(--rose), #fb7185); }
+  .btn.small { padding: 6px 12px; font-size: .8rem; }
+  .btn:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #a5b4ff; outline-offset: 2px; }
+
+  /* gesture panel */
+  .gesture { display: grid; grid-template-columns: 1fr auto; gap: 4px 18px; align-items: end; }
+  .big { font-size: 3.4rem; font-weight: 800; line-height: 1; min-height: 1em; }
+  .meter { height: 14px; border-radius: 999px; background: rgba(255,255,255,.14); border: 1px solid var(--edge); overflow: hidden; min-width: 180px; }
+  .meter > i { display: block; height: 100%; width: 0%; border-radius: 999px; background: #60a5fa; transition: width .06s linear; }
+  .slider-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; color: var(--muted); font-size: .9rem; }
+  input[type=range] { flex: 1; accent-color: #8b9cff; }
+
+  textarea, input[type=text], select {
+    font: inherit; color: var(--ink); width: 100%; border-radius: 14px; padding: 10px 14px;
+    background: rgba(10,16,52,.62); border: 1px solid rgba(255,255,255,.28);
+  }
+  textarea { font-size: 1.25rem; resize: vertical; min-height: 110px; }
+  select option, select optgroup { color: #12183a; }
+  ::placeholder { color: var(--dim); }
+
+  /* teach */
+  .teach-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  .progress { height: 10px; border-radius: 999px; background: rgba(255,255,255,.14); overflow: hidden; margin-top: 10px; }
+  .progress > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #60a5fa, #34d399); transition: width .08s linear; }
+  .counts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; max-height: 120px; overflow: auto; }
+  .count { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 11px; border-radius: 999px; font-size: .82rem; cursor: pointer;
+    background: rgba(255,255,255,.12); border: 1px solid var(--edge); }
+  .count.sel { background: rgba(139,92,246,.55); border-color: rgba(255,255,255,.6); }
+  .count b { font-weight: 700; }
+  .count button { all: unset; cursor: pointer; padding: 0 6px; color: var(--dim); border-radius: 50%; }
+  .count button:hover { color: #fff; }
+  details { margin-top: 12px; color: var(--muted); font-size: .9rem; }
+  details summary { cursor: pointer; font-weight: 600; }
+  details ol { margin: 8px 0 0; padding-left: 20px; line-height: 1.6; }
+
+  /* reference */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; margin-top: 12px; max-height: 330px; overflow: auto; padding-right: 4px; }
+  .sign { border-radius: 16px; padding: 8px 6px 8px; text-align: center; background: rgba(255,255,255,.12); border: 1px solid var(--edge); }
+  .sign svg { width: 100%; height: 76px; display: block; }
+  .sign .ch { font-weight: 800; font-size: 1.15rem; margin-top: 2px; }
+  .sign img { width: 100%; height: 76px; object-fit: contain; display: block; background: #fff; border-radius: 10px; padding: 4px; }
+  .big { display: flex; align-items: center; gap: 14px; }
+  .big img { height: 1.6em; width: auto; background: #fff; border-radius: 12px; padding: 4px; }
+  a { color: #bfe9ff; }
+  .sign .none { height: 76px; display: grid; place-items: center; font-size: .72rem; color: var(--dim); }
+  .empty { color: var(--muted); padding: 18px 4px; font-size: .95rem; }
+
+  footer.status { padding: 10px 18px; display: flex; gap: 12px; justify-content: space-between; flex-wrap: wrap; font-size: .88rem; }
+  footer .tip { color: var(--dim); }
+
+  @media (max-width: 960px) {
+    .grid { grid-template-columns: 1fr; }
+    .teach-grid { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<main class="app">
+  <header class="glass top">
+    <div class="logo">S</div>
+    <div>
+      <h1>SignTalk</h1>
+    </div>
+    <div class="tag">Sign language to text &amp; speech, in your browser</div>
+    <div class="chips">
+      <span class="chip"><span class="dot" id="camDot"></span><span id="camText">Camera off</span></span>
+      <span class="chip" id="modelChip">No signs taught yet</span>
+    </div>
+  </header>
+
+  <section class="grid">
+    <div class="col">
+      <div class="glass card">
+        <div class="stage">
+          <canvas id="view" width="960" height="720"></canvas>
+          <div class="idle" id="idle">Camera is off<br>Press “Start camera”</div>
+          <div class="overlay" id="overlay"></div>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn primary" id="btnStart">▶ Start camera</button>
+          <button class="btn" id="btnStop" disabled>■ Stop camera</button>
+        </div>
+      </div>
+
+      <div class="glass card">
+        <div class="row" style="justify-content:space-between; margin-bottom:10px">
+          <h2 style="margin:0">Recognized gesture</h2>
+          <select id="modeSel" style="width:auto">
+            <option value="pretrained">Pretrained model (A–Z, 0–9)</option>
+            <option value="taught">My taught signs</option>
+          </select>
+        </div>
+        <div class="gesture">
+          <div class="big" id="gesture"><img id="gestureImg" alt="" hidden><span id="gestureTxt">—</span></div>
+          <div style="text-align:right" class="hint" id="conf">Confidence –</div>
+          <div class="hint">Hold the sign steady until the bar fills</div>
+          <div class="meter"><i id="meter"></i></div>
+        </div>
+        <div class="slider-row">
+          <label for="minConf">Minimum confidence</label>
+          <input type="range" id="minConf" min="0.4" max="0.95" step="0.05" value="0.7">
+          <span id="minConfVal">70%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="glass card">
+        <div class="row" style="justify-content:space-between"><h2 style="margin:0">Translated sentence</h2><span class="hint">you can edit this text</span></div>
+        <textarea id="sentence" spellcheck="false" placeholder="Signs you make will appear here…" style="margin-top:10px"></textarea>
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" id="btnSpeak">♪ Speak</button>
+          <button class="btn danger" id="btnClear">Clear</button>
+          <button class="btn" id="btnSpace">Space</button>
+          <button class="btn" id="btnBack">⌫ Backspace</button>
+        </div>
+      </div>
+
+      <div class="glass card">
+        <h2>Teach SignTalk your signs</h2>
+        <div class="hint" style="margin-bottom:12px">Optional: the pretrained model already knows A–Z and 0–9. Teach your own signs or words here, then pick “My taught signs” above. Samples stay in this browser.</div>
+        <div class="teach-grid">
+          <div>
+            <label class="hint" for="labelSel">Sign to record</label>
+            <select id="labelSel"></select>
+          </div>
+          <div>
+            <label class="hint" for="customLabel">Or a custom word (optional)</label>
+            <input type="text" id="customLabel" placeholder="e.g. WATER" maxlength="20" autocomplete="off">
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="btnRecord">● Record 60 samples</button>
+          <label class="row hint" style="gap:6px"><input type="checkbox" id="autoNext" checked> Move to the next sign afterwards</label>
+        </div>
+        <div class="progress"><i id="recBar"></i></div>
+        <div class="counts" id="counts"></div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn small" id="btnExportCsv">Export CSV</button>
+          <button class="btn small" id="btnExportJson">Export JSON</button>
+          <button class="btn small" id="btnImport">Import file</button>
+          <button class="btn small danger" id="btnWipe">Delete all</button>
+          <input type="file" id="fileIn" accept=".csv,.json,text/csv,application/json" hidden>
+        </div>
+        <details>
+          <summary>How to teach it</summary>
+          <ol>
+            <li>Press <b>Start camera</b> and allow access.</li>
+            <li>Pick a sign (start with A, B and C), show it to the camera, then press <b>Record</b>.</li>
+            <li>After a 3-second countdown, hold the sign and slowly tilt or move your hand while it records.</li>
+            <li>Repeat for each sign. Once two or more signs are taught, choose “My taught signs” in the Recognized gesture panel.</li>
+          </ol>
+          <div class="hint" style="margin-top:8px">The CSV matches the Python desktop app, so you can import data recorded there (and the other way round).</div>
+        </details>
+      </div>
+
+      <div class="glass card">
+        <h2>Sign reference</h2>
+        <div class="row">
+          <input type="text" id="refIn" placeholder="Type a word to see its signs" style="flex:1; min-width:180px" autocomplete="off">
+          <button class="btn" id="btnAll">Show A–Z</button>
+        </div>
+        <div class="cards" id="cards"></div>
+        <div class="hint" style="margin-top:10px">Letter drawings: <a href="https://commons.wikimedia.org/wiki/Category:ASL_letters" target="_blank" rel="noopener">Wikimedia Commons</a>. Pretrained model: <a href="https://huggingface.co/nocontextdoruk/asl-landmark-mlp" target="_blank" rel="noopener">asl-landmark-mlp</a> (CC BY-NC 4.0), trained on the ASL-HG dataset (Pranto et al. 2026).</div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="glass status">
+    <span id="status">Ready.</span>
+    <span class="tip">Video is processed on your device and never uploaded. Lower your hand between signs to repeat a letter.</span>
+  </footer>
+</main>
+
+<!-- ============ Core logic (no DOM access, testable in Node) ============ -->
+<script id="core">
+const SignCore = (() => {
+  const NF = 63;
+  const CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+                       [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+  const LABEL_SETS = {
+    Letters: "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""),
+    Numbers: "0123456789".split(""),
+    Words: ["HELLO", "THANK_YOU", "YES", "NO", "HELP"],
+    Controls: ["SPACE", "DELETE"]
+  };
+  const WORD_TEXT = { HELLO: "Hello", THANK_YOU: "Thank You", YES: "Yes", NO: "No", HELP: "Help" };
+
+  function displayText(label) {
+    if (WORD_TEXT[label]) return WORD_TEXT[label];
+    if (label.length === 1) return label;
+    return label.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  // Same maths as hand_detection.normalize_landmarks in the desktop app:
+  // pixel units, wrist at origin, left hand mirrored, divided by the largest |value|.
+  function normalize(lm, w, h, isLeft) {
+    const out = new Float32Array(NF);
+    const wx = lm[0].x * w, wy = lm[0].y * h, wz = lm[0].z * w;
+    let max = 0;
+    for (let i = 0; i < 21; i++) {
+      let x = lm[i].x * w - wx;
+      const y = lm[i].y * h - wy;
+      const z = lm[i].z * w - wz;
+      if (isLeft) x = -x;
+      out[i * 3] = x; out[i * 3 + 1] = y; out[i * 3 + 2] = z;
+      max = Math.max(max, Math.abs(x), Math.abs(y), Math.abs(z));
+    }
+    if (max < 1e-6) max = 1;
+    for (let i = 0; i < NF; i++) out[i] /= max;
+    return out;
+  }
+
+  // Pretrained model (huggingface.co/nocontextdoruk/asl-landmark-mlp): raw image coords,
+  // wrist at origin, divided by |landmark 9|. mirror=true flips x so either hand works.
+  const PRETRAINED_CLASSES = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+  function normalizePretrained(lm, mirror) {
+    const out = new Float32Array(NF);
+    for (let i = 0; i < 21; i++) {
+      const x = lm[i].x - lm[0].x;
+      out[i * 3] = mirror ? -x : x; out[i * 3 + 1] = lm[i].y - lm[0].y; out[i * 3 + 2] = lm[i].z - lm[0].z;
+    }
+    let s = Math.hypot(out[27], out[28], out[29]);
+    if (s < 1e-6) s = 1;
+    for (let i = 0; i < NF; i++) out[i] /= s;
+    return out;
+  }
+  function softmaxTop(logits) {
+    let max = -Infinity, top = 0;
+    for (let i = 0; i < logits.length; i++) if (logits[i] > max) { max = logits[i]; top = i; }
+    let sum = 0;
+    for (let i = 0; i < logits.length; i++) sum += Math.exp(logits[i] - max);
+    return { index: top, conf: 1 / sum };
+  }
+
+  class KNN {
+    constructor(k = 7) { this.k = k; this.labels = []; this.X = new Float32Array(0); this.n = 0; this.classes = []; }
+    setData(data) {                       // data: {label: [Float32Array|number[], ...]}
+      const labels = [], rows = [];
+      for (const [label, arr] of Object.entries(data)) for (const f of arr) { labels.push(label); rows.push(f); }
+      this.n = rows.length; this.labels = labels;
+      this.X = new Float32Array(this.n * NF);
+      rows.forEach((f, i) => this.X.set(f, i * NF));
+      this.classes = Object.keys(data).filter(l => data[l].length > 0);
+    }
+    get ready() { return this.classes.length >= 2 && this.n > 0; }
+    predict(f) {
+      if (!this.ready) return null;
+      const k = Math.min(this.k, this.n), best = [];
+      for (let i = 0; i < this.n; i++) {
+        let d = 0; const base = i * NF;
+        for (let j = 0; j < NF; j++) { const t = this.X[base + j] - f[j]; d += t * t; }
+        if (best.length < k || d < best[best.length - 1].d) {
+          let p = best.length;
+          while (p > 0 && best[p - 1].d > d) p--;
+          best.splice(p, 0, { d, i });
+          if (best.length > k) best.pop();
+        }
+      }
+      const votes = {}; let total = 0;
+      for (const b of best) {
+        const wgt = 1 / (Math.sqrt(b.d) + 0.05);
+        const l = this.labels[b.i];
+        votes[l] = (votes[l] || 0) + wgt; total += wgt;
+      }
+      let top = null;
+      for (const l in votes) if (top === null || votes[l] > votes[top]) top = l;
+      return { label: top, conf: votes[top] / total };
+    }
+  }
+
+  // Turns noisy per-frame predictions into one clean key press (see gesture_recognition.py).
+  class Stabilizer {
+    constructor(minConfidence = 0.7, holdFrames = 12, releaseFrames = 8) {
+      this.minConfidence = minConfidence; this.holdFrames = holdFrames; this.releaseFrames = releaseFrames; this.reset();
+    }
+    reset() { this.cand = null; this.count = 0; this.noHand = 0; this.last = null; }
+    get progress() { return this.cand ? Math.min(this.count / this.holdFrames, 1) : 0; }
+    update(label, conf) {
+      if (label === null) {
+        this.cand = null; this.count = 0; this.noHand++;
+        if (this.noHand >= this.releaseFrames) this.last = null;
+        return null;
+      }
+      this.noHand = 0;
+      if (conf < this.minConfidence) { this.cand = null; this.count = 0; return null; }
+      if (label === this.cand) this.count++; else { this.cand = label; this.count = 1; }
+      if (this.count >= this.holdFrames && label !== this.last) { this.last = label; return label; }
+      return null;
+    }
+  }
+
+  const HEADER = "label," + Array.from({ length: 21 }, (_, i) => `x${i},y${i},z${i}`).join(",");
+  function toCSV(data) {
+    const lines = [HEADER];
+    for (const [label, arr] of Object.entries(data))
+      for (const f of arr) lines.push(label + "," + Array.from(f, v => v.toFixed(6)).join(","));
+    return lines.join("\n") + "\n";
+  }
+  function parseCSV(text) {
+    const data = {};
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const cells = line.split(",");
+      if (cells[0].trim().toLowerCase() === "label" || cells.length !== NF + 1) continue;
+      const vals = cells.slice(1).map(Number);
+      if (vals.some(Number.isNaN)) continue;
+      const label = cells[0].trim().toUpperCase();
+      (data[label] = data[label] || []).push(Float32Array.from(vals));
+    }
+    return data;
+  }
+  function toJSON(data) {
+    const o = {};
+    for (const [l, arr] of Object.entries(data)) o[l] = arr.map(f => Array.from(f, v => +v.toFixed(5)));
+    return JSON.stringify({ app: "SignTalk", version: 1, samples: o });
+  }
+  function parseJSON(text) {
+    const src = JSON.parse(text).samples || {};
+    const data = {};
+    for (const [l, arr] of Object.entries(src)) {
+      const rows = arr.filter(r => Array.isArray(r) && r.length === NF && r.every(Number.isFinite));
+      if (rows.length) data[String(l).toUpperCase()] = rows.map(r => Float32Array.from(r));
+    }
+    return data;
+  }
+  function meanPose(arr) {
+    const m = new Float32Array(NF);
+    for (const f of arr) for (let j = 0; j < NF; j++) m[j] += f[j];
+    for (let j = 0; j < NF; j++) m[j] /= arr.length;
+    return m;
+  }
+  return { NF, CONNECTIONS, LABEL_SETS, PRETRAINED_CLASSES, normalizePretrained, softmaxTop, displayText, normalize, KNN, Stabilizer, toCSV, parseCSV, toJSON, parseJSON, meanPose };
+})();
+if (typeof module !== "undefined") module.exports = SignCore;
+</script>
+
+<!-- ============================ App ============================ -->
+<script id="app">
+(() => {
+  const C = SignCore;
+  const $ = id => document.getElementById(id);
+  const TARGET = 60, STORE = "signtalk.dataset.v1";
+  const MP_VERSION = "0.10.14";
+  const MP_JS = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
+  const MP_WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
+  const MP_MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+  const ORT_BASE = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
+  const ASL_MODEL = "models/asl_mlp.onnx";
+  const MODE_STORE = "signtalk.mode.v1";
+  const refImg = ch => `https://commons.wikimedia.org/wiki/Special:FilePath/Sign_language_${ch}.svg`;
+
+  const canvas = $("view"), ctx = canvas.getContext("2d");
+  const video = document.createElement("video");
+  video.playsInline = true; video.muted = true;
+
+  const knn = new C.KNN(7);
+  const stab = new C.Stabilizer(0.7, 12, 8);
+  let data = {};            // label -> [Float32Array(63)]
+  let means = {};           // label -> mean pose (for the reference cards)
+  let mode = "pretrained";
+  try { if (localStorage.getItem(MODE_STORE) === "taught") mode = "taught"; } catch (e) {}
+  let asl = null, aslBusy = false, aslPred = null;   // pretrained ONNX session + latest result
+  let landmarker = null, stream = null, running = false, lastVideoTime = -1, lastTs = 0;
+  const rec = { state: "idle", label: null, samples: [], last: 0, countdownEnd: 0 };
+
+  // ---------- status / small helpers ----------
+  const say = t => { $("status").textContent = t; };
+  function setOverlay(html, small) {
+    const o = $("overlay");
+    o.className = "overlay" + (small ? " small" : "");
+    o.innerHTML = html;
+  }
+
+  // ---------- dataset ----------
+  function save() {
+    try { localStorage.setItem(STORE, C.toJSON(data)); } catch (e) { say("Could not save in this browser (storage full or blocked). Use Export to keep your samples."); }
+  }
+  function load() {
+    try { const t = localStorage.getItem(STORE); if (t) data = C.parseJSON(t); } catch (e) { data = {}; }
+  }
+  function rebuild() {
+    knn.setData(data);
+    means = {};
+    for (const [l, arr] of Object.entries(data)) if (arr.length) means[l] = C.meanPose(arr);
+    const classes = Object.keys(means).length, total = Object.values(data).reduce((a, b) => a + b.length, 0);
+    $("modelChip").textContent = mode === "pretrained" ? "Pretrained model · A–Z, 0–9"
+      : knn.ready ? `${classes} signs · ${total} samples`
+      : classes ? "Teach at least 2 signs" : "No signs taught yet";
+    renderCounts(); renderRef();
+  }
+
+  // ---------- label picker ----------
+  const sel = $("labelSel");
+  const ORDER = [];
+  for (const [group, labels] of Object.entries(C.LABEL_SETS)) {
+    const og = document.createElement("optgroup"); og.label = group;
+    for (const l of labels) { const o = document.createElement("option"); o.value = l; o.textContent = l.replace("_", " "); og.appendChild(o); ORDER.push(l); }
+    sel.appendChild(og);
+  }
+  const currentLabel = () => ($("customLabel").value.trim().toUpperCase().replace(/\s+/g, "_")) || sel.value;
+
+  function renderCounts() {
+    const box = $("counts"); box.innerHTML = "";
+    const cur = currentLabel();
+    for (const [l, arr] of Object.entries(data)) {
+      if (!arr.length) continue;
+      const el = document.createElement("span");
+      el.className = "count" + (l === cur ? " sel" : "");
+      el.innerHTML = `<span>${l.replace("_", " ")}</span><b>${arr.length}</b>`;
+      el.title = "Click to select this sign";
+      el.onclick = () => { if (ORDER.includes(l)) { $("customLabel").value = ""; sel.value = l; } else { $("customLabel").value = l; } renderCounts(); };
+      const x = document.createElement("button"); x.textContent = "✕"; x.title = "Delete this sign’s samples";
+      x.onclick = e => { e.stopPropagation(); if (confirm(`Delete all ${arr.length} samples of ${l}?`)) { delete data[l]; save(); rebuild(); } };
+      el.appendChild(x); box.appendChild(el);
+    }
+  }
+  sel.onchange = () => { $("customLabel").value = ""; renderCounts(); };
+  $("customLabel").oninput = renderCounts;
+
+  // ---------- reference cards ----------
+  let refChars = [];
+  function skeletonSVG(m) {
+    let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    for (let i = 0; i < 21; i++) { const x = m[i * 3], y = m[i * 3 + 1]; minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+    const s = Math.min(84 / Math.max(maxX - minX, 1e-6), 84 / Math.max(maxY - minY, 1e-6));
+    const ox = 50 - (minX + maxX) / 2 * s, oy = 50 - (minY + maxY) / 2 * s;
+    const P = i => [ox + m[i * 3] * s, oy + m[i * 3 + 1] * s];
+    let g = "";
+    for (const [a, b] of C.CONNECTIONS) { const [x1, y1] = P(a), [x2, y2] = P(b); g += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#bfe9ff" stroke-width="2.4" stroke-linecap="round"/>`; }
+    for (let i = 0; i < 21; i++) { const [x, y] = P(i); g += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.6" fill="#fff" stroke="#7dd3fc" stroke-width=".8"/>`; }
+    return `<svg viewBox="0 0 100 100" aria-hidden="true">${g}</svg>`;
+  }
+  function renderRef() {
+    const box = $("cards");
+    if (!refChars.length) { box.innerHTML = `<div class="empty" style="grid-column:1/-1">Type a word above to see the sign for each letter, or press “Show A–Z”.</div>`; return; }
+    box.innerHTML = refChars.map(ch => `<div class="sign">${/[A-Z]/.test(ch) ? `<img src="${refImg(ch)}" alt="ASL sign for ${ch}" loading="lazy">`
+      : means[ch] ? skeletonSVG(means[ch]) : `<div class="none">not taught yet</div>`}<div class="ch">${ch}</div></div>`).join("");
+  }
+  $("refIn").oninput = e => { refChars = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 60).split(""); renderRef(); };
+  $("btnAll").onclick = () => { $("refIn").value = ""; refChars = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"]; renderRef(); };
+  refChars = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+
+  // ---------- recognizer mode ----------
+  $("modeSel").value = mode;
+  $("modeSel").onchange = e => {
+    mode = e.target.value; stab.reset(); aslPred = null;
+    try { localStorage.setItem(MODE_STORE, mode); } catch (err) {}
+    rebuild();
+    if (mode === "pretrained" && running) ensureAsl().catch(() => {});
+    say(mode === "pretrained" ? "Using the pretrained model: sign any letter A–Z or digit 0–9."
+      : knn.ready ? "Using your taught signs." : "Teach at least 2 signs below, or switch back to the pretrained model.");
+  };
+
+  // ---------- sentence ----------
+  const sentence = $("sentence");
+  const insert = t => { sentence.value += t; sentence.scrollTop = sentence.scrollHeight; };
+  function applyLabel(label) {
+    if (label === "SPACE") insert(" ");
+    else if (label === "DELETE") sentence.value = sentence.value.slice(0, -1);
+    else if (label.length === 1) insert(label);
+    else { if (sentence.value && !/[ \n]$/.test(sentence.value)) insert(" "); insert(C.displayText(label) + " "); }
+    say("Added: " + C.displayText(label));
+  }
+  $("btnSpace").onclick = () => insert(" ");
+  $("btnBack").onclick = () => { sentence.value = sentence.value.slice(0, -1); };
+  $("btnClear").onclick = () => { sentence.value = ""; say("Sentence cleared."); };
+  $("btnSpeak").onclick = () => {
+    const text = sentence.value.trim();
+    if (!text) { say("Nothing to speak yet."); return; }
+    if (!("speechSynthesis" in window)) { say("This browser does not support speech. Try Chrome, Edge or Safari."); return; }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.onstart = () => say("Speaking…"); u.onend = () => say("Done speaking.");
+    u.onerror = () => say("Speech failed in this browser.");
+    speechSynthesis.speak(u);
+  };
+
+  // ---------- slider ----------
+  $("minConf").oninput = e => { const v = +e.target.value; stab.minConfidence = v; $("minConfVal").textContent = Math.round(v * 100) + "%"; };
+
+  // ---------- recording ----------
+  function startRecording() {
+    if (!running) { say("Start the camera first, then record."); return; }
+    const label = currentLabel();
+    if (!label) { say("Pick a sign to record."); return; }
+    Object.assign(rec, { state: "countdown", label, samples: [], last: 0, countdownEnd: performance.now() + 3000 });
+    $("btnRecord").textContent = "Cancel recording";
+    say(`Get ready: ${label.replace("_", " ")}`);
+  }
+  function stopRecording(finished) {
+    if (finished && rec.samples.length) {
+      (data[rec.label] = data[rec.label] || []).push(...rec.samples);
+      save(); rebuild();
+      say(`Saved ${rec.samples.length} samples for ${rec.label.replace("_", " ")}.`);
+      if ($("autoNext").checked && !$("customLabel").value.trim()) {
+        const i = ORDER.indexOf(rec.label); if (i >= 0 && i < ORDER.length - 1) { sel.value = ORDER[i + 1]; renderCounts(); }
+      }
+    } else if (!finished) say("Recording cancelled.");
+    rec.state = "idle"; $("btnRecord").textContent = `● Record ${TARGET} samples`; $("recBar").style.width = "0"; setOverlay("");
+  }
+  $("btnRecord").onclick = () => rec.state === "idle" ? startRecording() : stopRecording(false);
+
+  // ---------- import / export ----------
+  const download = (name, text, type) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  $("btnExportCsv").onclick = () => Object.keys(data).length ? download("gestures.csv", C.toCSV(data), "text/csv") : say("Nothing to export yet.");
+  $("btnExportJson").onclick = () => Object.keys(data).length ? download("signtalk-samples.json", C.toJSON(data), "application/json") : say("Nothing to export yet.");
+  $("btnImport").onclick = () => $("fileIn").click();
+  $("fileIn").onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const text = await f.text();
+      const incoming = f.name.toLowerCase().endsWith(".json") ? C.parseJSON(text) : C.parseCSV(text);
+      let n = 0;
+      for (const [l, arr] of Object.entries(incoming)) { (data[l] = data[l] || []).push(...arr); n += arr.length; }
+      if (!n) { say("No valid samples found in that file."); } else { save(); rebuild(); say(`Imported ${n} samples.`); }
+    } catch (err) { say("Could not read that file."); }
+    e.target.value = "";
+  };
+  $("btnWipe").onclick = () => { if (Object.keys(data).length && confirm("Delete ALL recorded samples from this browser?")) { data = {}; save(); rebuild(); say("All samples deleted."); } };
+
+  // ---------- camera + recognition ----------
+  async function ensureLandmarker() {
+    if (landmarker) return;
+    say("Loading hand tracking model (first time only)…");
+    const mp = await import(MP_JS);
+    const files = await mp.FilesetResolver.forVisionTasks(MP_WASM);
+    const opts = delegate => ({ baseOptions: { modelAssetPath: MP_MODEL, delegate }, runningMode: "VIDEO", numHands: 1,
+      minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
+    try { landmarker = await mp.HandLandmarker.createFromOptions(files, opts("GPU")); }
+    catch (e) { landmarker = await mp.HandLandmarker.createFromOptions(files, opts("CPU")); }
+  }
+
+  function loadScript(src) {
+    return new Promise((ok, fail) => { const t = document.createElement("script"); t.src = src; t.onload = ok; t.onerror = () => fail(new Error("Could not load " + src)); document.head.appendChild(t); });
+  }
+  async function ensureAsl() {
+    if (asl) return;
+    say("Loading pretrained sign model…");
+    if (!window.ort) await loadScript(ORT_BASE + "ort.min.js");
+    ort.env.wasm.wasmPaths = ORT_BASE; ort.env.wasm.numThreads = 1;
+    asl = await ort.InferenceSession.create(ASL_MODEL, { executionProviders: ["wasm"] });
+  }
+  // Runs the model on the hand as seen and mirrored, keeps the more confident answer.
+  async function predictAsl(lm) {
+    aslBusy = true;
+    try {
+      let best = null;
+      for (const mirror of [false, true]) {
+        const input = new ort.Tensor("float32", C.normalizePretrained(lm, mirror), [1, C.NF]);
+        const out = await asl.run({ input });
+        const p = C.softmaxTop(out.logits.data);
+        if (!best || p.conf > best.conf) best = { label: C.PRETRAINED_CLASSES[p.index], conf: p.conf };
+      }
+      aslPred = best;
+    } catch (e) { aslPred = null; }
+    aslBusy = false;
+  }
+
+  async function startCamera() {
+    if (running) return;
+    $("btnStart").disabled = true;
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+        throw new Error("This page needs a secure address (https:// or localhost) to use the camera.");
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 960 }, height: { ideal: 720 }, facingMode: "user" }, audio: false });
+      video.srcObject = stream; await video.play();
+      await ensureLandmarker();
+      if (mode === "pretrained") await ensureAsl();
+    } catch (err) {
+      stopStream(); $("btnStart").disabled = false;
+      const name = err && err.name;
+      say(name === "NotAllowedError" ? "Camera permission was denied. Allow camera access in your browser’s address bar and try again."
+        : name === "NotFoundError" ? "No camera found. Connect a webcam and try again."
+        : name === "NotReadableError" ? "The camera is busy. Close other apps using it and try again."
+        : "Could not start: " + (err && err.message ? err.message : err));
+      return;
+    }
+    running = true; stab.reset(); lastVideoTime = -1;
+    $("btnStop").disabled = false; $("idle").style.display = "none";
+    $("camDot").classList.add("live"); $("camText").textContent = "Live";
+    say(mode === "pretrained" ? "Camera is on. Sign any letter A–Z or digit 0–9."
+      : knn.ready ? "Camera is on. Show a sign." : "Camera is on. Teach at least 2 signs below to start recognizing.");
+    requestAnimationFrame(loop);
+  }
+  function stopStream() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } video.srcObject = null; }
+  function stopCamera() {
+    running = false; stopStream();
+    if (rec.state !== "idle") stopRecording(false);
+    stab.reset(); setOverlay("");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    $("idle").style.display = ""; $("btnStart").disabled = false; $("btnStop").disabled = true;
+    $("camDot").classList.remove("live"); $("camText").textContent = "Camera off";
+    setGesture(null, 0); $("meter").style.width = "0"; say("Camera stopped.");
+  }
+  $("btnStart").onclick = startCamera; $("btnStop").onclick = stopCamera;
+
+  let shownGesture = "";
+  function setGesture(label, conf) {
+    const t = label ? C.displayText(label) : "—";
+    if (t !== shownGesture) {
+      $("gestureTxt").textContent = t; shownGesture = t;
+      const img = $("gestureImg");
+      if (label && /^[A-Z]$/.test(label)) { img.src = refImg(label); img.alt = "ASL sign for " + label; img.hidden = false; } else img.hidden = true;
+    }
+    $("conf").textContent = label ? `Confidence ${Math.round(conf * 100)}%` : "Confidence –";
+  }
+  function drawHand(lm, w, h) {
+    ctx.lineCap = "round"; ctx.lineWidth = Math.max(2.5, w / 300); ctx.strokeStyle = "rgba(170,225,255,.95)";
+    for (const [a, b] of C.CONNECTIONS) { ctx.beginPath(); ctx.moveTo(lm[a].x * w, lm[a].y * h); ctx.lineTo(lm[b].x * w, lm[b].y * h); ctx.stroke(); }
+    ctx.lineWidth = 1.5; ctx.strokeStyle = "#7dd3fc"; ctx.fillStyle = "#fff";
+    const r = Math.max(3.5, w / 190);
+    for (const p of lm) { ctx.beginPath(); ctx.arc(p.x * w, p.y * h, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+  }
+
+  function loop() {
+    if (!running) return;
+    requestAnimationFrame(loop);
+    if (video.readyState < 2 || video.currentTime === lastVideoTime) return;
+    lastVideoTime = video.currentTime;
+    const w = video.videoWidth, h = video.videoHeight;
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+    // mirrored frame (selfie view) - same convention as the desktop app
+    ctx.save(); ctx.translate(w, 0); ctx.scale(-1, 1); ctx.drawImage(video, 0, 0, w, h); ctx.restore();
+
+    let ts = performance.now(); if (ts <= lastTs) ts = lastTs + 1; lastTs = ts;
+    let res = null;
+    try { res = landmarker.detectForVideo(canvas, ts); } catch (e) { /* skip a bad frame */ }
+    const hasHand = !!(res && res.landmarks && res.landmarks.length);
+    if (!hasHand) aslPred = null;
+    let label = null, conf = 0, feats = null;
+
+    if (hasHand) {
+      const lm = res.landmarks[0];
+      const isLeft = res.handednesses && res.handednesses[0] && res.handednesses[0][0].categoryName === "Left";
+      feats = C.normalize(lm, w, h, isLeft);
+      drawHand(lm, w, h);
+      if (rec.state === "idle" && mode === "pretrained" && asl) {
+        if (!aslBusy) predictAsl(lm);
+        if (aslPred) { label = aslPred.label; conf = aslPred.conf; }
+      } else if (rec.state === "idle" && knn.ready) { const p = knn.predict(feats); if (p) { label = p.label; conf = p.conf; } }
+    }
+
+    // recording state machine
+    const now = performance.now();
+    if (rec.state === "countdown") {
+      const left = Math.ceil((rec.countdownEnd - now) / 1000);
+      if (left <= 0) { rec.state = "record"; rec.last = 0; }
+      else setOverlay(`<span>${left}</span>`);
+    }
+    if (rec.state === "record") {
+      if (feats && now - rec.last >= 80) { rec.samples.push(feats); rec.last = now; }
+      $("recBar").style.width = Math.round(rec.samples.length / TARGET * 100) + "%";
+      setOverlay(`<span class="pill">Recording ${rec.label.replace("_", " ")} · ${rec.samples.length}/${TARGET}${hasHand ? "" : " · show your hand"}</span>`, true);
+      if (rec.samples.length >= TARGET) stopRecording(true);
+    }
+
+    // recognition
+    if (rec.state === "idle") {
+      setGesture(hasHand ? label : null, conf);
+      const accepted = stab.update(hasHand ? label : null, conf);
+      $("meter").style.width = Math.round(stab.progress * 100) + "%";
+      $("meter").style.background = `hsl(${210 + 0 * 1 - stab.progress * 60} 90% 62%)`;
+      if (accepted) applyLabel(accepted);
+      else if (!hasHand && knn.ready && $("status").textContent.startsWith("Camera is on")) { /* keep message */ }
+    } else {
+      setGesture(null, 0); stab.reset(); $("meter").style.width = "0";
+    }
+  }
+
+  // keyboard shortcut: R starts/cancels recording (when not typing)
+  addEventListener("keydown", e => {
+    if (e.key.toLowerCase() === "r" && !e.metaKey && !e.ctrlKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) $("btnRecord").click();
+  });
+  addEventListener("pagehide", () => stopStream());
+
+  load(); rebuild();
+})();
+</script>
+</body>
+</html>
